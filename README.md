@@ -7,7 +7,7 @@ A modern desktop application for enabling wireless Android debugging with one cl
 
 ## Screenshot
 
-![ADB Wireless Debug App](https://github.com/phcodesage/adb-wireless/assets/screenshot.png)
+![ADB Wireless Debug App](https://github.com/phcodesage/adb-wireless-toggle-sage/blob/main/src/assets/screenshot.png)
 
 ## Features
 
