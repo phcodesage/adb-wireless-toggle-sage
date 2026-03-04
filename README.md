@@ -5,6 +5,10 @@ A modern desktop application for enabling wireless Android debugging with one cl
 ![ADB Wireless Debug](https://img.shields.io/badge/version-0.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
+## Screenshot
+
+![ADB Wireless Debug App](https://github.com/yourusername/adb-wireless/assets/screenshot.png)
+
 ## Features
 
 - 🔌 **One-Click Wireless Setup** - Enable wireless debugging instantly

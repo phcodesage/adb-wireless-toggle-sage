@@ -2,7 +2,7 @@
 name = "adb-wireless"
 version = "0.1.0"
 description = "A modern desktop application for enabling wireless Android debugging with one click"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Rech Toledo rechceltoledo@gmail.com"]
 license = "MIT"
 repository = "https://github.com/yourusername/adb-wireless"
 edition = "2021"
