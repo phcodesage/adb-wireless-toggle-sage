@@ -7,7 +7,7 @@ A modern desktop application for enabling wireless Android debugging with one cl
 
 ## Screenshot
 
-![ADB Wireless Debug App](https://github.com/yourusername/adb-wireless/assets/screenshot.png)
+![ADB Wireless Debug App](https://github.com/phcodesage/adb-wireless/assets/screenshot.png)
 
 ## Features
 
