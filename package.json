@@ -1,10 +1,26 @@
 {
   "name": "adb-wireless",
-  "private": true,
   "version": "0.1.0",
+  "description": "A modern desktop application for enabling wireless Android debugging with one click",
   "type": "module",
+  "author": "Your Name <your.email@example.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/adb-wireless.git"
+  },
+  "keywords": [
+    "adb",
+    "android",
+    "wireless",
+    "debugging",
+    "tauri",
+    "developer-tools"
+  ],
   "scripts": {
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
