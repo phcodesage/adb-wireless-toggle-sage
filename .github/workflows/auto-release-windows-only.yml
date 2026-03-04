@@ -1,0 +1,107 @@
+name: Auto Release (Windows Only)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust cache
+      uses: swatinem/rust-cache@v2
+      with:
+        workspaces: './src-tauri -> target'
+
+    - name: Install frontend dependencies
+      run: npm ci
+
+    - name: Build application
+      run: npm run build
+
+    - name: Prepare artifacts
+      shell: bash
+      run: |
+        mkdir -p release-artifacts
+        cp src-tauri/target/release/bundle/msi/*.msi release-artifacts/ 2>/dev/null || echo "No MSI found"
+        cp src-tauri/target/release/bundle/nsis/*.exe release-artifacts/ 2>/dev/null || echo "No NSIS found"
+        ls -la release-artifacts/
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-artifacts
+        path: release-artifacts/*
+        retention-days: 7
+
+  create-release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: windows-artifacts
+        path: windows-build
+
+    - name: Display files
+      run: ls -la windows-build/
+
+    - name: Get current date
+      id: date
+      run: echo "date=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
+
+    - name: Delete existing latest release
+      continue-on-error: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release delete latest-windows --yes || true
+        git push origin :refs/tags/latest-windows || true
+
+    - name: Create/Update Latest Windows Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: latest-windows
+        name: "Latest Windows Build"
+        body: |
+          ## 🪟 Latest Windows Build
+          
+          **Built on:** ${{ steps.date.outputs.date }}
+          **Commit:** ${{ github.sha }}
+          
+          This is an automatically generated Windows release from the latest commit on the main branch.
+          
+          ### 📦 Installation
+          1. Download the `.msi` file below
+          2. Run the installer
+          3. Follow the installation wizard
+          
+          ### ⚠️ Note
+          This is a development build. For stable releases, check tagged versions.
+          
+          ---
+          [View Commit](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+        files: |
+          windows-build/*
+        draft: false
+        prerelease: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
