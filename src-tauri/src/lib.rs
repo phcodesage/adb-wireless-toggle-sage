@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use std::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Device {
@@ -14,17 +15,95 @@ pub struct CommandResult {
     pub message: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AdbConfig {
+    pub path: String,
+}
+
+// Global state to store the ADB path
+pub struct AdbState {
+    pub adb_path: Mutex<String>,
+}
+
+impl AdbState {
+    pub fn new() -> Self {
+        Self {
+            adb_path: Mutex::new(String::new()),
+        }
+    }
+}
+
+/// Find ADB in common locations
+fn find_adb() -> Option<String> {
+    // First, try the system PATH
+    if let Ok(output) = Command::new("adb").arg("version").output() {
+        if output.status.success() {
+            return Some("adb".to_string());
+        }
+    }
+
+    // Common ADB locations on macOS
+    let common_paths = [
+        "/usr/local/bin/adb",
+        "/opt/homebrew/bin/adb",
+        "/usr/bin/adb",
+        "/bin/adb",
+        "~/Library/Android/sdk/platform-tools/adb",
+        "~/android-sdk/platform-tools/adb",
+        "/Applications/Android Studio.app/Contents/sdk/platform-tools/adb",
+        "~/Library/Android/sdk/platform-tools/adb.exe",
+    ];
+
+    for path in &common_paths {
+        let expanded = shellexpand::tilde(path);
+        let path_str = expanded.as_ref();
+        if std::path::Path::new(path_str).exists() {
+            // Verify it's actually working
+            if let Ok(output) = Command::new(path_str).arg("version").output() {
+                if output.status.success() {
+                    return Some(path_str.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Get the current ADB path from state or find it
+fn get_adb_path(state: &tauri::State<AdbState>) -> String {
+    // Try to get from state first
+    if let Ok(path) = state.adb_path.lock() {
+        if !path.is_empty() {
+            return path.clone();
+        }
+    }
+
+    // Find and cache the path
+    if let Some(path) = find_adb() {
+        if let Ok(mut state_path) = state.adb_path.lock() {
+            *state_path = path.clone();
+        }
+        return path;
+    }
+
+    // Fallback to "adb" and let it fail with a clear error
+    "adb".to_string()
+}
+
 /// Check if ADB is reachable on the system
 #[tauri::command]
-fn get_adb_status() -> CommandResult {
-    match Command::new("adb").arg("version").output() {
+fn get_adb_status(state: tauri::State<AdbState>) -> CommandResult {
+    let adb_path = get_adb_path(&state);
+
+    match Command::new(&adb_path).arg("version").output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             if output.status.success() {
                 let version_line = stdout.lines().next().unwrap_or("ADB found").to_string();
                 CommandResult {
                     success: true,
-                    message: version_line,
+                    message: format!("{} (path: {})", version_line, adb_path),
                 }
             } else {
                 CommandResult {
@@ -35,15 +114,51 @@ fn get_adb_status() -> CommandResult {
         }
         Err(e) => CommandResult {
             success: false,
-            message: format!("ADB not found: {}", e),
+            message: format!("ADB not found: {}. Please install ADB or set the correct path in settings.", e),
+        },
+    }
+}
+
+/// Get the current ADB path
+#[tauri::command]
+fn get_adb_config(state: tauri::State<AdbState>) -> AdbConfig {
+    let path = get_adb_path(&state);
+    AdbConfig { path }
+}
+
+/// Set a custom ADB path
+#[tauri::command]
+fn set_adb_path(config: AdbConfig, state: tauri::State<AdbState>) -> CommandResult {
+    // Verify the path works
+    match Command::new(&config.path).arg("version").output() {
+        Ok(output) => {
+            if output.status.success() {
+                if let Ok(mut path) = state.adb_path.lock() {
+                    *path = config.path;
+                }
+                CommandResult {
+                    success: true,
+                    message: "ADB path updated successfully".to_string(),
+                }
+            } else {
+                CommandResult {
+                    success: false,
+                    message: "Invalid ADB path: command returned an error".to_string(),
+                }
+            }
+        }
+        Err(e) => CommandResult {
+            success: false,
+            message: format!("Failed to verify ADB path: {}", e),
         },
     }
 }
 
 /// List all connected ADB devices
 #[tauri::command]
-fn list_devices() -> Result<Vec<Device>, String> {
-    let output = Command::new("adb")
+fn list_devices(state: tauri::State<AdbState>) -> Result<Vec<Device>, String> {
+    let adb_path = get_adb_path(&state);
+    let output = Command::new(&adb_path)
         .arg("devices")
         .arg("-l")
         .output()
@@ -81,9 +196,9 @@ fn list_devices() -> Result<Vec<Device>, String> {
 }
 
 /// Get the Wi-Fi IP address of a USB-connected device
-fn get_device_ip(serial: &str) -> Result<String, String> {
+fn get_device_ip(serial: &str, adb_path: &str) -> Result<String, String> {
     // Try via ip addr show wlan0
-    let output = Command::new("adb")
+    let output = Command::new(adb_path)
         .args(["-s", serial, "shell", "ip", "addr", "show", "wlan0"])
         .output()
         .map_err(|e| format!("Failed to get IP: {}", e))?;
@@ -104,7 +219,7 @@ fn get_device_ip(serial: &str) -> Result<String, String> {
     }
 
     // Fallback: try ip route
-    let output2 = Command::new("adb")
+    let output2 = Command::new(adb_path)
         .args(["-s", serial, "shell", "ip", "route"])
         .output()
         .map_err(|e| format!("Failed to get IP via route: {}", e))?;
@@ -130,12 +245,13 @@ fn get_device_ip(serial: &str) -> Result<String, String> {
 
 /// Enable wireless debugging: sets TCP/IP mode, detects IP, and connects
 #[tauri::command]
-fn enable_wireless(serial: String, port: Option<u16>) -> CommandResult {
+fn enable_wireless(serial: String, port: Option<u16>, state: tauri::State<AdbState>) -> CommandResult {
+    let adb_path = get_adb_path(&state);
     let port = port.unwrap_or(5555);
     let port_str = port.to_string();
 
     // Step 1: Enable TCP/IP mode
-    let tcpip_output = Command::new("adb")
+    let tcpip_output = Command::new(&adb_path)
         .args(["-s", &serial, "tcpip", &port_str])
         .output();
 
@@ -166,7 +282,7 @@ fn enable_wireless(serial: String, port: Option<u16>) -> CommandResult {
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     // Step 2: Get device IP
-    let ip = match get_device_ip(&serial) {
+    let ip = match get_device_ip(&serial, &adb_path) {
         Ok(ip) => ip,
         Err(e) => {
             return CommandResult {
@@ -178,7 +294,7 @@ fn enable_wireless(serial: String, port: Option<u16>) -> CommandResult {
 
     // Step 3: Connect wirelessly
     let connect_addr = format!("{}:{}", ip, port);
-    let connect_output = Command::new("adb")
+    let connect_output = Command::new(&adb_path)
         .args(["connect", &connect_addr])
         .output();
 
@@ -213,8 +329,9 @@ fn enable_wireless(serial: String, port: Option<u16>) -> CommandResult {
 
 /// Disconnect a wireless device
 #[tauri::command]
-fn disconnect_device(address: String) -> CommandResult {
-    let output = Command::new("adb")
+fn disconnect_device(address: String, state: tauri::State<AdbState>) -> CommandResult {
+    let adb_path = get_adb_path(&state);
+    let output = Command::new(&adb_path)
         .args(["disconnect", &address])
         .output();
 
@@ -236,9 +353,12 @@ fn disconnect_device(address: String) -> CommandResult {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(AdbState::new())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_adb_status,
+            get_adb_config,
+            set_adb_path,
             list_devices,
             enable_wireless,
             disconnect_device,

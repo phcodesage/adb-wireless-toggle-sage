@@ -1,4 +1,5 @@
 const { invoke } = window.__TAURI__.core;
+const { open } = window.__TAURI__.opener;
 
 // ===== DOM Elements =====
 const deviceListEl = document.getElementById("device-list");
@@ -7,6 +8,9 @@ const adbStatusEl = document.getElementById("adb-status");
 const adbStatusTextEl = document.getElementById("adb-status-text");
 const logContentEl = document.getElementById("log-content");
 const refreshBtn = document.getElementById("refresh-btn");
+const settingsPanelEl = document.getElementById("settings-panel");
+const adbPathInputEl = document.getElementById("adb-path-input");
+const adbPathStatusEl = document.getElementById("adb-path-status");
 
 // ===== Logging =====
 function addLog(message, type = "info") {
@@ -196,6 +200,65 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
+
+// ===== Settings =====
+window.toggleSettings = function () {
+  settingsPanelEl.classList.toggle("hidden");
+  if (!settingsPanelEl.classList.contains("hidden")) {
+    loadAdbConfig();
+  }
+};
+
+async function loadAdbConfig() {
+  try {
+    const config = await invoke("get_adb_config");
+    adbPathInputEl.value = config.path === "adb" ? "" : config.path;
+  } catch (e) {
+    addLog(`Failed to load ADB config: ${e}`, "error");
+  }
+}
+
+window.saveAdbPath = async function () {
+  const path = adbPathInputEl.value.trim();
+  adbPathStatusEl.textContent = "Verifying...";
+  adbPathStatusEl.className = "adb-path-status";
+
+  try {
+    const result = await invoke("set_adb_path", { config: { path: path || "adb" } });
+    if (result.success) {
+      adbPathStatusEl.textContent = "✓ " + result.message;
+      adbPathStatusEl.className = "adb-path-status success";
+      addLog("ADB path updated", "success");
+      // Refresh ADB status and device list
+      await checkAdbStatus();
+      await window.refreshDevices();
+      setTimeout(() => {
+        settingsPanelEl.classList.add("hidden");
+        adbPathStatusEl.textContent = "";
+      }, 1000);
+    } else {
+      adbPathStatusEl.textContent = "✗ " + result.message;
+      adbPathStatusEl.className = "adb-path-status error";
+    }
+  } catch (e) {
+    adbPathStatusEl.textContent = "✗ Error: " + e;
+    adbPathStatusEl.className = "adb-path-status error";
+  }
+};
+
+window.resetAdbPath = async function () {
+  adbPathInputEl.value = "";
+  await window.saveAdbPath();
+};
+
+window.browseAdbPath = async function () {
+  // Open a file dialog using the opener plugin
+  // Note: Full file dialog requires additional Tauri plugin
+  addLog("Please manually enter the ADB path. Common locations:", "info");
+  addLog("  - /opt/homebrew/bin/adb (Homebrew on Apple Silicon)", "info");
+  addLog("  - /usr/local/bin/adb (Homebrew on Intel Mac)", "info");
+  addLog("  - ~/Library/Android/sdk/platform-tools/adb (Android Studio)", "info");
+};
 
 // ===== Init =====
 document.addEventListener("DOMContentLoaded", async () => {
